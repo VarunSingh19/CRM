@@ -150,19 +150,18 @@ requestLogger (x-request-id; secrets redacted) → helmet headers → CORS allow
 | Probe | Checks | 200 | 503 | Point at it |
 |---|---|---|---|---|
 | `/live` | the process only, no I/O | always, while it runs | never | the orchestrator's restart (liveness) probe |
-| `/health` | a real database ping (2 s timeout), plus the email relay's last check | `ok`, or `degraded` when only email is down | `down`: the database doesn't answer | uptime monitors, dashboards, people |
-| `/ready` | the database ping, and whether shutdown has begun | `ready` | `unavailable` or `shutting-down` | the load balancer |
+| `/health` | a real database ping (2 s timeout) | `true`, also while only email is down | `false`: the database doesn't answer | uptime monitors, dashboards, people |
+| `/ready` | the database ping, and whether shutdown has begun | `true` | `false`: the database doesn't answer, or shutdown has begun | the load balancer |
 
 ```json
 GET /health
-{ "status": "ok",
-  "checks": { "database": { "status": "up", "latencyMs": 3 },
-              "smtp":     { "status": "up", "checkedAt": "2026-09-25T10:30:00.000Z" } } }
+{ "status": true, "checkedAt": "2026-09-25T10:30:00.000Z" }
 ```
 
+- The response is only `status` and `checkedAt`: which services exist, and how each is doing, stay in the log, so a public probe doesn't map the backend.
+- Only the database decides the status. Email being down doesn't stop the API, so it stays a `200` and is logged as an error (`smtp unavailable`), once when it goes down.
 - Probes within 2 s share one database ping, so a flood of `/health` calls can't load the database.
-- Email isn't signed in to on every probe, which would be slow and could get SES to throttle the account. It is rechecked in the background every 5 minutes (every 30 s while failing), and every real send updates it too.
-- No host names, versions or error messages appear in the response; the details are in the log.
+- Email isn't signed in to on every probe, which would be slow and could get SES to throttle the account. `/health` starts a background recheck every 5 minutes (every 30 s while failing), and every real send updates it too.
 - Don't point a restart probe at `/health`: a database outage would restart every healthy process.
 
 ## Not included yet (on purpose)

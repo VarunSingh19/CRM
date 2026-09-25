@@ -1,37 +1,34 @@
-import { type DatabaseCheck, pingDatabase } from "../../config/database/database.js";
+import { pingDatabase } from "../../config/database/database.js";
 import { smtpHealth } from "../../config/smtp/smtp.js";
 import { isDraining } from "../../utils/lifecycle/lifecycle.js";
 
 /**
- * What the probes report, and what counts as healthy. The database is
- * critical: without it nothing works. Email is not: the API keeps serving
- * while it's down, so that is "degraded", not "down".
+ * What the probes report: only whether the API works, and when that was
+ * checked. Which services exist and how each is doing stays in the log;
+ * a public probe must not map the backend for whoever calls it.
+ *
+ * The database decides the status: without it nothing works. Email does not:
+ * the API keeps serving while it's down, and the relay's failure is logged
+ * as an error instead.
  */
-export interface HealthReport {
-  status: "ok" | "degraded" | "down";
-  checks: {
-    database: DatabaseCheck;
-    smtp: ReturnType<typeof smtpHealth>;
-  };
-}
-
-export interface ReadinessReport {
-  status: "ready" | "unavailable" | "shutting-down";
-  checks: { database: DatabaseCheck };
+export interface ProbeReport {
+  status: boolean;
+  checkedAt: string;
 }
 
 export const healthService = {
-  async health(): Promise<HealthReport> {
+  async health(): Promise<ProbeReport> {
     const database = await pingDatabase();
-    const smtp = smtpHealth();
-    const status = database.status === "down" ? "down" : smtp.status === "down" ? "degraded" : "ok";
-    return { status, checks: { database, smtp } };
+    // Not part of the status. The call starts a background recheck of the
+    // relay once the last result is stale, and that check logs an error
+    // when email goes down.
+    smtpHealth();
+    return { status: database.status === "up", checkedAt: new Date().toISOString() };
   },
 
   /** Safe to route traffic here: the database answers and the process isn't shutting down. */
-  async readiness(): Promise<ReadinessReport> {
+  async readiness(): Promise<ProbeReport> {
     const database = await pingDatabase();
-    const status = isDraining() ? "shutting-down" : database.status === "up" ? "ready" : "unavailable";
-    return { status, checks: { database } };
+    return { status: !isDraining() && database.status === "up", checkedAt: new Date().toISOString() };
   },
 };

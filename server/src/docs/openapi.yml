@@ -50,49 +50,38 @@ paths:
   /health:
     get:
       tags: [Health]
-      summary: Health — the process, the database and email
+      summary: Health — whether the API works
       description: |
         Pings the database for real (a round trip, answered within 2 s; one
-        result is shared by probes within 2 s of each other). Email shows the
-        last check of the SMTP relay, rechecked in the background every
-        5 minutes (every 30 s while it is failing), so this never waits on it.
-        No host names, versions or error messages are exposed.
+        result is shared by probes within 2 s of each other). Only the
+        database decides the status: email being down doesn't stop the API,
+        so it stays a 200 and is logged as an error. The response says
+        nothing about which services exist or how each is doing; that is in
+        the server log.
       operationId: getHealth
       security: []
       responses:
         "200":
-          description: Healthy (`ok`), or working without email (`degraded`).
+          description: The API works (the database answers). Email may be down; the log says so.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/X-Request-Id"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Health"
-              examples:
-                ok:
-                  value:
-                    status: ok
-                    checks:
-                      database: { status: up, latencyMs: 3 }
-                      smtp: { status: up, checkedAt: "2026-09-25T10:30:00.000Z" }
-                emailDown:
-                  value:
-                    status: degraded
-                    checks:
-                      database: { status: up, latencyMs: 3 }
-                      smtp: { status: down, checkedAt: "2026-09-25T10:30:00.000Z" }
+                $ref: "#/components/schemas/ProbeReport"
+              example:
+                status: true
+                checkedAt: "2026-09-25T10:30:00.000Z"
         "503":
           description: The database doesn't answer; the API can't work.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Health"
+                $ref: "#/components/schemas/ProbeReport"
               example:
-                status: down
-                checks:
-                  database: { status: down }
-                  smtp: { status: up, checkedAt: "2026-09-25T10:30:00.000Z" }
+                status: false
+                checkedAt: "2026-09-25T10:30:00.000Z"
 
   /ready:
     get:
@@ -110,22 +99,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Readiness"
+                $ref: "#/components/schemas/ProbeReport"
               example:
-                status: ready
-                checks:
-                  database: { status: up, latencyMs: 3 }
+                status: true
+                checkedAt: "2026-09-25T10:30:00.000Z"
         "503":
           description: The database is unreachable, or the server is shutting down; send traffic elsewhere.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Readiness"
-              examples:
-                shuttingDown:
-                  value: { status: shutting-down, checks: { database: { status: up, latencyMs: 3 } } }
-                databaseDown:
-                  value: { status: unavailable, checks: { database: { status: down } } }
+                $ref: "#/components/schemas/ProbeReport"
+              example:
+                status: false
+                checkedAt: "2026-09-25T10:30:00.000Z"
 
 components:
   headers:
@@ -143,60 +129,17 @@ components:
           type: string
           const: ok
 
-    DatabaseCheck:
-      type: object
-      required: [status]
-      properties:
-        status:
-          type: string
-          enum: [up, down]
-        latencyMs:
-          type: integer
-          description: Round-trip time of the ping; only when it answered.
-
-    SmtpCheck:
+    ProbeReport:
       type: object
       required: [status, checkedAt]
       properties:
         status:
-          type: string
-          enum: [up, down, disabled]
-          description: "`disabled`: SMTP_HOST is empty (development only)."
+          type: boolean
+          description: "`true` (200): the API works. `false` (503): it doesn't."
         checkedAt:
-          type: [string, "null"]
+          type: string
           format: date-time
-          description: When the relay was last checked (or last sent an email).
-
-    Health:
-      type: object
-      required: [status, checks]
-      properties:
-        status:
-          type: string
-          enum: [ok, degraded, down]
-          description: "`down` (503): the database doesn't answer. `degraded` (200): only email is down."
-        checks:
-          type: object
-          required: [database, smtp]
-          properties:
-            database:
-              $ref: "#/components/schemas/DatabaseCheck"
-            smtp:
-              $ref: "#/components/schemas/SmtpCheck"
-
-    Readiness:
-      type: object
-      required: [status, checks]
-      properties:
-        status:
-          type: string
-          enum: [ready, unavailable, shutting-down]
-        checks:
-          type: object
-          required: [database]
-          properties:
-            database:
-              $ref: "#/components/schemas/DatabaseCheck"
+          description: When this probe ran.
 
     Error:
       description: The shape of every error response.

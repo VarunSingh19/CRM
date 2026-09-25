@@ -17,13 +17,13 @@ export const healthController = {
   },
 
   /**
-   * Health: the process and its dependencies, for uptime monitors and people.
-   * 503 when the database doesn't answer; 200 "degraded" when only email is
-   * down, since the API still works without it.
+   * Health: whether the API works, for uptime monitors and people. 503 when
+   * the database doesn't answer. Email being down stays a 200, since the API
+   * still works without it; the log reports that as an error.
    */
   async health(_req: Request, res: Response) {
     const report = await healthService.health();
-    res.status(report.status === "down" ? 503 : 200).json(report);
+    res.status(report.status ? 200 : 503).json(report);
   },
 
   /**
@@ -33,6 +33,6 @@ export const healthController = {
    */
   async ready(_req: Request, res: Response) {
     const report = await healthService.readiness();
-    res.status(report.status === "ready" ? 200 : 503).json(report);
+    res.status(report.status ? 200 : 503).json(report);
   },
 };
