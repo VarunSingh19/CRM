@@ -1,0 +1,296 @@
+# The API contract, written by hand. Rendered at /api-docs (Swagger UI) and
+# served raw at /api-docs/openapi.json. Checked at startup: a broken file
+# stops the server. Add each new route here in the same change as its code.
+openapi: 3.1.0
+
+info:
+  title: Onference CRM API
+  version: 0.1.0
+  description: |
+    Every response is JSON. Success bodies are the data itself, with no
+    envelope. Lists are bare arrays with the total in `X-Total-Count`.
+    Every error has the `Error` shape below, and every response carries an
+    `X-Request-Id` header that finds its line in the server log.
+
+servers:
+  - url: /
+    description: This server
+
+# Every /api route needs the custom header (see components.securitySchemes).
+# The health probes opt out with `security: []`. Use the Authorize button
+# above to send it from this page.
+security:
+  - customHeader: []
+
+tags:
+  - name: Health
+    description: Probes for load balancers and orchestrators. No session needed.
+
+paths:
+  /live:
+    get:
+      tags: [Health]
+      summary: Liveness — the process is up
+      description: Does no I/O. Point the orchestrator's restart probe here, so a database outage never gets healthy processes restarted.
+      operationId: getLive
+      security: []
+      responses:
+        "200":
+          description: The process is serving requests.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Liveness"
+              example:
+                status: ok
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Health — the process, the database and email
+      description: |
+        Pings the database for real (a round trip, answered within 2 s; one
+        result is shared by probes within 2 s of each other). Email shows the
+        last check of the SMTP relay, rechecked in the background every
+        5 minutes (every 30 s while it is failing), so this never waits on it.
+        No host names, versions or error messages are exposed.
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: Healthy (`ok`), or working without email (`degraded`).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+              examples:
+                ok:
+                  value:
+                    status: ok
+                    checks:
+                      database: { status: up, latencyMs: 3 }
+                      smtp: { status: up, checkedAt: "2026-09-25T10:30:00.000Z" }
+                emailDown:
+                  value:
+                    status: degraded
+                    checks:
+                      database: { status: up, latencyMs: 3 }
+                      smtp: { status: down, checkedAt: "2026-09-25T10:30:00.000Z" }
+        "503":
+          description: The database doesn't answer; the API can't work.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+              example:
+                status: down
+                checks:
+                  database: { status: down }
+                  smtp: { status: up, checkedAt: "2026-09-25T10:30:00.000Z" }
+
+  /ready:
+    get:
+      tags: [Health]
+      summary: Readiness — safe to route traffic here
+      description: 200 when the database answers a ping. 503 when it doesn't, and from the moment shutdown begins, so the load balancer drains this instance first.
+      operationId: getReady
+      security: []
+      responses:
+        "200":
+          description: Ready for traffic.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+              example:
+                status: ready
+                checks:
+                  database: { status: up, latencyMs: 3 }
+        "503":
+          description: The database is unreachable, or the server is shutting down; send traffic elsewhere.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+              examples:
+                shuttingDown:
+                  value: { status: shutting-down, checks: { database: { status: up, latencyMs: 3 } } }
+                databaseDown:
+                  value: { status: unavailable, checks: { database: { status: down } } }
+
+components:
+  headers:
+    X-Request-Id:
+      description: The id of this request in the server log. Quote it when reporting a problem.
+      schema:
+        type: string
+
+  schemas:
+    Liveness:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+
+    DatabaseCheck:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [up, down]
+        latencyMs:
+          type: integer
+          description: Round-trip time of the ping; only when it answered.
+
+    SmtpCheck:
+      type: object
+      required: [status, checkedAt]
+      properties:
+        status:
+          type: string
+          enum: [up, down, disabled]
+          description: "`disabled`: SMTP_HOST is empty (development only)."
+        checkedAt:
+          type: [string, "null"]
+          format: date-time
+          description: When the relay was last checked (or last sent an email).
+
+    Health:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, down]
+          description: "`down` (503): the database doesn't answer. `degraded` (200): only email is down."
+        checks:
+          type: object
+          required: [database, smtp]
+          properties:
+            database:
+              $ref: "#/components/schemas/DatabaseCheck"
+            smtp:
+              $ref: "#/components/schemas/SmtpCheck"
+
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, unavailable, shutting-down]
+        checks:
+          type: object
+          required: [database]
+          properties:
+            database:
+              $ref: "#/components/schemas/DatabaseCheck"
+
+    Error:
+      description: The shape of every error response.
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+          description: Written for users; the UI can show it as-is.
+          examples: ["email: Must be a valid email address"]
+        code:
+          type: string
+          description: Stable, for the client to branch on.
+          examples: [VALIDATION_ERROR, INVALID_API_KEY, UNAUTHENTICATED, FORBIDDEN, ROUTE_NOT_FOUND, RATE_LIMITED, EMAIL_UNAVAILABLE, INTERNAL_ERROR]
+        requestId:
+          type: string
+          description: Same as the X-Request-Id header.
+        details:
+          type: array
+          description: Every field problem, on a validation error.
+          items:
+            type: object
+            required: [path, message]
+            properties:
+              path:
+                type: string
+                examples: [body.email]
+              message:
+                type: string
+
+  # Reusable error responses: reference these from every new route, e.g.
+  #   "400": { $ref: "#/components/responses/ValidationError" }
+  responses:
+    ValidationError:
+      description: The request is wrong; `details` names the fields.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InvalidApiKey:
+      description: The custom header is missing or wrong (`INVALID_API_KEY`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthenticated:
+      description: Not signed in, or the session ended.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: The caller's role or ownership doesn't allow this, or the request came from a site not on the allowlist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such record or route.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RateLimited:
+      description: Too many requests; wait for the time in `Retry-After`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    EmailUnavailable:
+      description: The email relay couldn't be reached or refused the message (`EMAIL_UNAVAILABLE`); try again later.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: A server fault. Nothing internal is exposed; quote `requestId` when reporting it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  securitySchemes:
+    # The shared key every /api request carries. The name shown here is
+    # replaced at startup with CUSTOM_HEADER_NAME from the environment.
+    customHeader:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: The shared key in CUSTOM_HEADER_VALUE. Every /api route answers 401 INVALID_API_KEY without it.
+    # For the routes that come with sign-in: an HttpOnly session cookie.
+    # Apply it per route (or globally) once authentication exists.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: crm_session
+      description: HttpOnly session cookie set by the sign-in endpoint (`__Host-crm_session` in production).

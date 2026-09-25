@@ -1,0 +1,10 @@
+node_modules
+.next
+.env.local
+.env
+*.log
+.DS_Store
+skills
+
+HOW-TO-CHANGE-THIS-CODEBASE.md
+production-project-architect.skill
