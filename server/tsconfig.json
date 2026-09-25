@@ -1,7 +1,9 @@
 {
-  // TypeScript 7 (native compiler). `baseUrl` and `moduleResolution: node` were
-  // removed in 7.0 — do not add them back. Imports use explicit `.js` suffixes
-  // because this is native ESM run by Node, not a bundler.
+  // Pinned to TypeScript 5.x: Vercel's Node builder fails on TypeScript 7
+  // (TS2688 for `types: ["node"]`). Keep this config TS 7-compatible for the
+  // eventual upgrade — `baseUrl` and `moduleResolution: node` are removed in
+  // 7.0, so do not add them. Imports use explicit `.js` suffixes because this
+  // is native ESM run by Node, not a bundler.
   "compilerOptions": {
     "target": "es2023",
     "lib": ["es2023"],
