@@ -26,8 +26,10 @@ npm run dev          # http://localhost:4000
 One folder per layer. Inside each layer, one folder per feature (or per concern), then the file.
 
 ```
+index.js                       Vercel entry: serves the compiled dist/serverless.js (run `npm run build` first)
 src/
 ├── server.ts                  starts the server; graceful shutdown
+├── serverless.ts              the app for Vercel: connects on the first request; no listen(), no signals
 ├── app.ts                     builds the app; global middleware order
 ├── config/                    env/env.ts · logger/logger.ts · database/database.ts · smtp/smtp.ts · swagger/swagger.ts
 ├── docs/                      openapi.yml — the API contract (Swagger)
